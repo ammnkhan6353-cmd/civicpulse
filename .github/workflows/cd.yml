@@ -1,0 +1,168 @@
+name: cd
+
+# On every push to main: test the merged result -> build + push images tagged with
+# the commit SHA -> deploy that SHA to an ephemeral k3d cluster and smoke-test it.
+on:
+  push:
+    branches: [main]
+
+# Least privilege: read the repo, write packages (GHCR). Nothing else.
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: cd-main
+  cancel-in-progress: false
+
+jobs:
+  test:
+    # The full CI suite again, on the merged result.
+    uses: ./.github/workflows/ci.yml
+
+  build-push:
+    needs: test            # never publish code we already know is broken
+    runs-on: ubuntu-latest
+    outputs:
+      owner: ${{ steps.meta.outputs.owner }}
+      backend_digest: ${{ steps.backend.outputs.digest }}
+      frontend_digest: ${{ steps.frontend.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lower-case owner (GHCR requires it)
+        id: meta
+        run: echo "owner=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v3
+      - name: Log in to GHCR with the scoped, short-lived GITHUB_TOKEN
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push backend
+        id: backend
+        uses: docker/build-push-action@v6
+        with:
+          context: backend
+          push: true
+          tags: |
+            ghcr.io/${{ steps.meta.outputs.owner }}/civicpulse-backend:${{ github.sha }}
+            ghcr.io/${{ steps.meta.outputs.owner }}/civicpulse-backend:latest
+          labels: org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+      - name: Build and push frontend
+        id: frontend
+        uses: docker/build-push-action@v6
+        with:
+          context: frontend
+          push: true
+          tags: |
+            ghcr.io/${{ steps.meta.outputs.owner }}/civicpulse-frontend:${{ github.sha }}
+            ghcr.io/${{ steps.meta.outputs.owner }}/civicpulse-frontend:latest
+          labels: org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+      - name: SBOM (Syft) - backend
+        uses: anchore/sbom-action@v0.17.0
+        with:
+          image: ghcr.io/${{ steps.meta.outputs.owner }}/civicpulse-backend:${{ github.sha }}
+          artifact-name: sbom-backend.spdx.json
+          upload-release-assets: false
+      - name: SBOM (Syft) - frontend
+        uses: anchore/sbom-action@v0.17.0
+        with:
+          image: ghcr.io/${{ steps.meta.outputs.owner }}/civicpulse-frontend:${{ github.sha }}
+          artifact-name: sbom-frontend.spdx.json
+          upload-release-assets: false
+      - name: Summary
+        run: |
+          {
+            echo "### Images pushed"
+            echo "- backend  \`ghcr.io/${{ steps.meta.outputs.owner }}/civicpulse-backend:${{ github.sha }}\`  digest \`${{ steps.backend.outputs.digest }}\`"
+            echo "- frontend \`ghcr.io/${{ steps.meta.outputs.owner }}/civicpulse-frontend:${{ github.sha }}\`  digest \`${{ steps.frontend.outputs.digest }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  deploy-k8s:
+    needs: build-push      # deploy only what was just built, tested and pushed
+    runs-on: ubuntu-latest
+    env:
+      OWNER: ${{ needs.build-push.outputs.owner }}
+      SHA: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install k3d and create an ephemeral cluster
+        run: |
+          curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | TAG=v5.7.4 bash
+          k3d cluster create civicpulse --agents 1 -p "8080:80@loadbalancer" --wait
+          kubectl get nodes
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Pull the SHA-tagged images and load them into the cluster
+        run: |
+          docker pull "ghcr.io/$OWNER/civicpulse-backend:$SHA"
+          docker pull "ghcr.io/$OWNER/civicpulse-frontend:$SHA"
+          k3d image import -c civicpulse "ghcr.io/$OWNER/civicpulse-backend:$SHA" "ghcr.io/$OWNER/civicpulse-frontend:$SHA"
+      - name: Install the VPA CRD (recommender objects need their API type)
+        run: |
+          kubectl apply -f https://raw.githubusercontent.com/kubernetes/autoscaler/vertical-pod-autoscaler-1.2.1/vertical-pod-autoscaler/deploy/vpa-v1-crd-gen.yaml \
+            || kubectl apply -f https://raw.githubusercontent.com/kubernetes/autoscaler/master/vertical-pod-autoscaler/deploy/vpa-v1-crd-gen.yaml
+      - name: Ensure kustomize is available
+        run: |
+          if ! command -v kustomize >/dev/null; then
+            curl -s https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh | bash
+            sudo mv kustomize /usr/local/bin/
+          fi
+          kustomize version
+      - name: Write secrets from GitHub Secrets (never from the repo)
+        env:
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        run: |
+          umask 077
+          {
+            echo "POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-$(openssl rand -hex 16)}"
+            echo "GROQ_API_KEY=${GROQ_API_KEY}"
+          } > k8s/overlays/prod/secrets.prod.env
+      - name: Pin the overlay to this commit SHA (never :latest)
+        working-directory: k8s/overlays/prod
+        run: |
+          kustomize edit set image "civicpulse-backend=ghcr.io/$OWNER/civicpulse-backend:$SHA"
+          kustomize edit set image "civicpulse-frontend=ghcr.io/$OWNER/civicpulse-frontend:$SHA"
+          grep -A2 "civicpulse-" kustomization.yaml
+      - name: kubectl apply -k overlays/prod
+        run: kubectl apply -k k8s/overlays/prod
+      - name: Wait for rollout
+        run: |
+          kubectl -n civicpulse rollout status statefulset/postgres --timeout=300s
+          kubectl -n civicpulse rollout status deployment/redis --timeout=180s
+          kubectl -n civicpulse rollout status deployment/backend --timeout=300s
+          kubectl -n civicpulse rollout status deployment/frontend --timeout=180s
+          kubectl -n civicpulse wait --for=condition=complete job/seed --timeout=300s
+      - name: Smoke test through the Ingress
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:8080/api/complaints?page_size=1 -o /tmp/list.json && break
+            sleep 2
+          done
+          echo "Complaints seeded: $(jq .total /tmp/list.json)"
+          test "$(jq .total /tmp/list.json)" -ge 30
+          curl -fsS http://127.0.0.1:8080/ | grep -q '<div id="root">'
+          code=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8080/api/complaints \
+            -H 'Content-Type: application/json' \
+            -d '{"text":"Transformer sparking near the school gate since morning","location":"Model Town, Lahore"}')
+          test "$code" = "201"
+          echo "Smoke test passed. Production is running $SHA"
+      - name: kubectl get hpa / pods
+        if: always()
+        run: |
+          kubectl -n civicpulse get hpa
+          kubectl -n civicpulse get pods -o wide
+          kubectl -n civicpulse get deploy backend -o jsonpath='{.spec.template.spec.containers[0].image}{"\n"}'
+      - name: Diagnostics on failure
+        if: failure()
+        run: |
+          kubectl -n civicpulse get events --sort-by=.lastTimestamp | tail -40
+          kubectl -n civicpulse describe pods | tail -120
+          kubectl -n civicpulse logs deploy/backend --all-containers --tail=100 || true
