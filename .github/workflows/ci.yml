@@ -124,10 +124,17 @@ jobs:
         with:
           name: images
       - run: docker load -i images.tar
-      - name: Install Trivy
+      - name: Install Trivy (official apt repository)
         run: |
-          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
-            | sudo sh -s -- -b /usr/local/bin v0.58.1
+          sudo apt-get update -q
+          sudo apt-get install -y -q wget gnupg
+          wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key \
+            | gpg --dearmor | sudo tee /usr/share/keyrings/trivy.gpg > /dev/null
+          echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb generic main" \
+            | sudo tee /etc/apt/sources.list.d/trivy.list
+          sudo apt-get update -q
+          sudo apt-get install -y -q trivy
+          trivy --version
       - name: Trivy - fail on HIGH/CRITICAL that have a fixed version
         run: |
           for image in civicpulse-backend:ci civicpulse-frontend:ci; do
@@ -165,13 +172,16 @@ jobs:
           sed -i "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=ci-$(openssl rand -hex 8)/" .env
       - name: docker compose up -d
         run: docker compose up -d --build
-      - name: Wait for /ready
+      - name: Wait for backend /ready and frontend (nginx) to be up
         run: |
           for i in $(seq 1 60); do
-            if curl -fsS http://127.0.0.1:8000/ready; then echo; exit 0; fi
+            if curl -fsS http://127.0.0.1:8000/ready && curl -fsS http://127.0.0.1:8080/healthz; then
+              echo "backend and frontend are up"; exit 0
+            fi
             sleep 3
           done
-          echo "::error::backend never became ready"; exit 1
+          docker compose ps
+          echo "::error::stack never became ready"; exit 1
       - name: POST a complaint through nginx, GET it back, assert the category
         run: |
           set -euo pipefail
