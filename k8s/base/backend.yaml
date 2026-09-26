@@ -1,0 +1,102 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+  namespace: civicpulse
+  labels: { app: backend }
+spec:
+  type: ClusterIP
+  selector: { app: backend }
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: civicpulse
+  labels: { app: backend }
+spec:
+  replicas: 2
+  revisionHistoryLimit: 5          # keeps old ReplicaSets for `kubectl rollout undo`
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1                  # add one new pod at a time...
+      maxUnavailable: 0            # ...and never drop below the desired count
+  selector:
+    matchLabels: { app: backend }
+  template:
+    metadata:
+      labels: { app: backend }
+    spec:
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+      initContainers:
+        # Schema is owned by Alembic. Retries (pod restarts) until Postgres is up.
+        - name: migrate
+          image: civicpulse-backend      # tag set by the overlay (never :latest in prod)
+          command: ["alembic", "upgrade", "head"]
+          envFrom:
+            - configMapRef: { name: civicpulse-config }
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: civicpulse-secrets, key: POSTGRES_PASSWORD } }
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { cpu: 500m, memory: 256Mi }
+      containers:
+        - name: backend
+          image: civicpulse-backend
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+              name: http
+          envFrom:
+            - configMapRef: { name: civicpulse-config }
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: civicpulse-secrets, key: POSTGRES_PASSWORD } }
+            - name: GROQ_API_KEY
+              valueFrom: { secretKeyRef: { name: civicpulse-secrets, key: GROQ_API_KEY } }
+          # Slow start is not failure: allow up to 30 x 2 s = 60 s before liveness kicks in.
+          startupProbe:
+            httpGet: { path: /health, port: 8000 }
+            failureThreshold: 30
+            periodSeconds: 2
+          # Restarts the pod. Must NOT depend on the database.
+          livenessProbe:
+            httpGet: { path: /health, port: 8000 }
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          # Removes the pod from the Service. SHOULD depend on the database.
+          readinessProbe:
+            httpGet: { path: /ready, port: 8000 }
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 2
+          lifecycle:
+            preStop:
+              # Keep serving while the endpoint removal propagates to kube-proxy and
+              # the Ingress; only then does SIGTERM start uvicorn's graceful drain.
+              exec: { command: ["sleep", "8"] }
+          # Requests are mandatory: the HPA computes utilisation = usage / request.
+          # Initial guess (recorded in docs/evidence/vpa.md): 100m CPU, 128Mi memory.
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { cpu: 500m, memory: 384Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

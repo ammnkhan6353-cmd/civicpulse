@@ -1,0 +1,36 @@
+# --- secrets: never commit ---
+.env
+.env.*
+!.env.example
+k8s/overlays/prod/secrets.prod.env
+*.pem
+*.key
+
+# --- python ---
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+backend/openapi.json
+
+# --- node ---
+node_modules/
+frontend/dist/
+frontend/coverage/
+npm-debug.log*
+
+# --- load testing scratch ---
+load/*.csv
+load/results/
+
+# --- editors / OS ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

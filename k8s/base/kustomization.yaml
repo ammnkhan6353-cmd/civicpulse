@@ -1,0 +1,30 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: civicpulse
+
+resources:
+  - namespace.yaml
+  - configmap.yaml
+  - postgres.yaml
+  - redis.yaml
+  - backend.yaml
+  - frontend.yaml
+  - ingress.yaml
+  - hpa.yaml
+  - vpa.yaml
+  - pdb.yaml
+  - seed-job.yaml
+
+# The Secret is generated from a PLACEHOLDER file. Real values never enter Git:
+# overlays/prod replaces it from secrets.prod.env, written by CD from GitHub Secrets.
+secretGenerator:
+  - name: civicpulse-secrets
+    envs:
+      - secret.placeholder.env
+
+generatorOptions:
+  disableNameSuffixHash: true
+
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: civicpulse

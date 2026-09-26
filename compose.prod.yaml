@@ -1,0 +1,125 @@
+# CivicPulse - production-style stack. Runs the IMAGES that CI built, scanned and
+# pushed; there is no build: key anywhere in this file.
+#
+#   IMAGE_TAG=<git-sha> GHCR_OWNER=<github-user-lowercase> \
+#     docker compose -f compose.prod.yaml up -d
+#
+# Differences from compose.yaml: images by immutable tag, no bind mount, no --reload,
+# and NO published port on postgres or redis (only the frontend is reachable).
+
+name: civicpulse-prod
+
+x-backend-env: &backend-env
+  POSTGRES_HOST: postgres
+  POSTGRES_DB: ${POSTGRES_DB:-civicpulse}
+  POSTGRES_USER: ${POSTGRES_USER:-civicpulse}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+  REDIS_URL: redis://redis:6379/0
+  TRIAGE_PROVIDER: ${TRIAGE_PROVIDER:-llm}
+  GROQ_API_KEY: ${GROQ_API_KEY:-}
+  GROQ_MODEL: ${GROQ_MODEL:-llama-3.1-8b-instant}
+  RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-10}
+  LOG_LEVEL: INFO
+
+services:
+  frontend:
+    image: ghcr.io/${GHCR_OWNER:?set GHCR_OWNER}/civicpulse-frontend:${IMAGE_TAG:?set IMAGE_TAG to a commit SHA}
+    ports:
+      - "80:8080"
+    networks: [edge]
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits: { cpus: "0.25", memory: 64M }
+
+  backend:
+    image: ghcr.io/${GHCR_OWNER:?set GHCR_OWNER}/civicpulse-backend:${IMAGE_TAG:?set IMAGE_TAG to a commit SHA}
+    environment: *backend-env
+    networks: [edge, internal]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=2).status == 200 else 1)"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 15s
+    restart: unless-stopped
+    stop_grace_period: 30s
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 512M }
+
+  migrate:
+    image: ghcr.io/${GHCR_OWNER:?set GHCR_OWNER}/civicpulse-backend:${IMAGE_TAG:?set IMAGE_TAG to a commit SHA}
+    command: ["sh", "-c", "alembic upgrade head && python -m app.seed"]
+    environment: *backend-env
+    networks: [internal]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      disable: true
+    restart: "no"
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 256M }
+
+  postgres:
+    image: postgres:16.10-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-civicpulse}
+      POSTGRES_USER: ${POSTGRES_USER:-civicpulse}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks: [internal]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 512M }
+
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
+    volumes:
+      - redisdata:/data
+    networks: [internal]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 128M }
+
+networks:
+  edge:
+    driver: bridge
+  internal:
+    driver: bridge
+    internal: true
+
+volumes:
+  pgdata:
+  redisdata:
