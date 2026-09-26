@@ -41,7 +41,7 @@ class LLMTriage:
         sleep: Callable[[float], None] | None = None,
     ) -> None:
         self.model = model
-        self.client = client or openai.OpenAI(
+        self.client: Any = client or openai.OpenAI(
             api_key=api_key or "missing-key",
             base_url=base_url,
             timeout=timeout_seconds,
