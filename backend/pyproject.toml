@@ -1,0 +1,42 @@
+[project]
+name = "civicpulse-backend"
+version = "1.0.0"
+description = "CivicPulse - municipal complaint intake, AI triage and operations API"
+requires-python = ">=3.11"
+# Dependencies live in requirements.txt / requirements-dev.txt so the Dockerfile
+# can install them in their own cached layer before the source is copied.
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["alembic/versions"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "W"]
+ignore = ["B008"]  # FastAPI's Depends() in default arguments is the intended pattern
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]
+known-third-party = ["alembic"]
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+warn_unused_ignores = false
+check_untyped_defs = true
+plugins = ["pydantic.mypy"]
+exclude = ["alembic/", "tests/"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q"
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.coverage.run]
+source = ["app"]
+omit = ["app/seed_data.py", "app/export_openapi.py"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
