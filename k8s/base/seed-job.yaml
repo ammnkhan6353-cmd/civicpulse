@@ -1,0 +1,27 @@
+# Idempotent seed: safe to run on every deploy (INSERT ... ON CONFLICT DO NOTHING).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: seed
+  namespace: civicpulse
+spec:
+  backoffLimit: 10
+  ttlSecondsAfterFinished: 600
+  template:
+    spec:
+      restartPolicy: OnFailure
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+      containers:
+        - name: seed
+          image: civicpulse-backend
+          command: ["sh", "-c", "alembic upgrade head && python -m app.seed"]
+          envFrom:
+            - configMapRef: { name: civicpulse-config }
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: civicpulse-secrets, key: POSTGRES_PASSWORD } }
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { cpu: 500m, memory: 256Mi }

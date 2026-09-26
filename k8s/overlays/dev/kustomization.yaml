@@ -1,0 +1,23 @@
+# Local k3d cluster. Images are built on the laptop and imported into k3d:
+#   docker build -t civicpulse-backend:dev backend
+#   docker build -t civicpulse-frontend:dev frontend
+#   k3d image import civicpulse-backend:dev civicpulse-frontend:dev -c civicpulse
+#   kubectl apply -k k8s/overlays/dev
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+
+images:
+  - name: civicpulse-backend
+    newTag: dev
+  - name: civicpulse-frontend
+    newTag: dev
+
+patches:
+  # Locally: more verbose logs. With the placeholder key, triage falls back to rules.
+  - target: { kind: ConfigMap, name: civicpulse-config }
+    patch: |-
+      - op: replace
+        path: /data/LOG_LEVEL
+        value: DEBUG
