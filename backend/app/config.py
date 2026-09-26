@@ -42,7 +42,7 @@ class Settings(BaseSettings):
 
     # --- Cache and rate limiting ---------------------------------------------
     stats_cache_ttl_seconds: int = 30
-    rate_limit_per_minute: int = Field(default=10, ge=1)
+    rate_limit_per_minute: int = Field(default=20, ge=1)  # shared CGNAT IPs need burst room
 
     def sqlalchemy_url(self) -> str:
         if self.database_url:
