@@ -37,7 +37,3 @@ def test_terminal_states_allow_nothing():
     assert allowed_next(Status.resolved) == []
     assert allowed_next(Status.rejected) == []
     assert allowed_next(Status.open) == [Status.in_progress, Status.rejected]
-
-
-def test_gate_demo_deliberately_fails():
-    assert 1 + 1 == 3  # proves a red check blocks the merge
