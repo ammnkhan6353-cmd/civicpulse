@@ -24,8 +24,10 @@ Course policy (5.5) asks for honest, specific attribution. This is ours.
 |---|---|---|
 | e.g. `frontend/src/api/schema.d.ts` | Regenerated from the real backend OpenAPI schema | The AI's version was hand-written; CI checks it against the generated one |
 | e.g. `backend/app/config.py` | Resolved the rate-limit merge conflict (10/min) | See `docs/evidence/merge-conflict.md` |
-| [FILL IN] | | |
-| [FILL IN] | | |
+| `backend/app/providers/triage/llm.py:44` | Annotated the client as `self.client: Any` | mypy failed with "No overload variant of create" because the injected fake client and the real `openai.OpenAI` have different types; the annotation lets tests inject a fake while keeping mypy strict elsewhere |
+| `.github/workflows/ci.yml` (scan job) | Replaced the Trivy install script with the official apt repository | The AI's install step failed on the GitHub runner, so the scan job was red on the first CI run |
+| `.github/workflows/ci.yml` (integration job) | Wait for both backend `/ready` and nginx `/healthz` before testing | First CI run failed with `curl: (56) Connection reset by peer`: the backend was ready but nginx was not yet accepting connections | | | |
 
 - All evidence (screenshots, `hpa -w` capture, load-test chart, VPA numbers, the merge conflict, the red/green PR), the demo video, Engineering Notes Q5, Q6 numbers and Q8, and every PR review comment are our own work.
 - We reviewed each other's PRs and each of us can explain the other's area (viva preparation).
+| `GROQ_MODEL` default (6 files) | Switched `llama-3.1-8b-instant` to `openai/gpt-oss-20b` | The AI-generated default had been retired by Groq: every complaint fell back to `rules:fallback`. A direct SDK call showed `404 model_not_found`; we listed the models our key can use and benchmarked two through `LLMTriage` before choosing |

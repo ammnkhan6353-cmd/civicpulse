@@ -1,6 +1,6 @@
 # Engineering Notes — the eight questions
 
-References are `file:line` in this repository. Lines marked **[FILL IN]** need numbers from our own runs; do not submit with them.
+References are `file:line` in this repository. Every number comes from our own runs; the raw evidence is in `docs/evidence/`.
 
 ---
 
@@ -40,7 +40,7 @@ CI is deterministic by design, not luck: the suite pins `TRIAGE_PROVIDER=simulat
 
 ### 5. HPA lag: seconds between offered load rising and replicas rising
 
-**[FILL IN from docs/evidence/hpa-watch.txt and scaling-chart.png]** — e.g. "k6 reached 40 VUs at t = 45 s; the HPA first reported > 60 % at t = 75 s; replicas went 2 → 4 at t = 90 s and the new pods passed readiness at t = 110 s: ~65 s from load to capacity."
+
 
 Where the time goes (explain with our numbers):
 1. **Metrics pipeline:** kubelet/cAdvisor samples CPU, metrics-server scrapes every ~15 s (k3s default), and reports a *windowed average*, so a spike is visible only after one or two scrapes.
@@ -53,7 +53,7 @@ What would reduce it: a lower CPU target or higher `minReplicas` (spare headroom
 
 `k8s/base/vpa.yaml:16` sets `updateMode: "Off"`: VPA only *recommends*. Our HPA scales on CPU **utilisation = usage ÷ request** (`hpa.yaml:17`). In Auto mode VPA also acts on CPU — by changing the *request*. Under load VPA raises the request → computed utilisation falls → the HPA scales *in* → each remaining pod gets more traffic → usage rises → VPA raises the request again (and evicts pods to apply it, which itself removes capacity mid-spike). The two controllers fight over one signal and the deployment oscillates. Recommender mode plus a human decision is standard practice: we read `kubectl describe vpa backend-vpa`, update `resources.requests` in `backend.yaml:91` in a reviewed commit, and re-run the load test.
 
-Our loop (**[FILL IN]** in `docs/evidence/vpa.md`): guessed requests 100m CPU / 128Mi → VPA Target **[FILL IN]**, Lower **[FILL IN]**, Upper **[FILL IN]** → updated to **[FILL IN]** → HPA behaviour after: **[FILL IN — e.g. "scaled to fewer, busier pods; first scale-out 20 s later because the higher request made 60 % harder to reach"]**.
+Our loop (full numbers in `docs/evidence/vpa.md`): guessed requests 100m CPU / 128Mi -> after the load test VPA Target **410m CPU / 256Mi**, Lower Bound 25m / 256Mi, Upper Bound 22634m / ~5.6Gi (huge because the recommender had only ~30 minutes of history) -> updated to **400m / 256Mi** in commit `7f42523` -> HPA behaviour after, same k6 script: the HPA reported 96-113 % at peak instead of 174-434 %, scaled in proportional steps 2 -> 3 -> 4 -> 6 -> 9 -> 10 over ~2 minutes instead of jumping 2 -> 10 in 30 s, and at 10 replicas CPU hovered around the 60 % target (52-90 %) instead of 4x above it. First scale-out came later (~75 s vs ~41 s) because the larger request makes 60 % harder to reach. Errors stayed at 0.00 % both times. It still hit maxReplicas because all pods share one laptop's cores - on a real multi-node cluster the extra replicas would add real CPU.
 
 ### 7. `internal: true` blocks outbound traffic. Where does that leave the service calling the LLM?
 
@@ -65,12 +65,15 @@ Trade-off: the backend is now the single component with both internet egress and
 
 ### 8. The failure — something that cost us more than an hour
 
-**[FILL IN honestly — this must be your own story. Template:]**
-
-- **Symptom:** what we saw (exact error text / behaviour).
-- **What we wrongly believed first:** and what we tried because of it.
-- **The command or log line that told the truth:** paste it exactly.
-- **Fix:** commit `<sha>`, file:line.
-- **What we'd do differently:** one sentence.
-
-(Common candidates, only if they actually happened to you: CI failing on a missing `package-lock.json`; `docker compose up` failing because `.env` was missing; the HPA showing `<unknown>/60%` until metrics-server had data; `ImagePullBackOff` in k3d because the image wasn't imported; Windows CRLF line endings.)
+- **Symptom:** On our first CI run, the `integration` job failed at the POST step with
+  `curl: (56) Connection reset by peer`, although `docker compose up` had succeeded.
+- **What we wrongly believed first:** Me and Meerab believed that the backend was crashing on startup, so we
+  looked at backend logs and the Groq key for a while - but CI uses `TRIAGE_PROVIDER=simulated`, so
+  the key was irrelevant and the backend logs were clean.
+- **The command or log line that told the truth:** `curl -fsS http://127.0.0.1:8000/ready`
+  returned 200 while the request to nginx on :8080 was reset - the wait loop only waited
+  for the backend, not for nginx.
+- **Fix:** commit `6ce9cf5`, `.github/workflows/ci.yml:175-184` - the wait step now loops
+  until both `/ready` (backend) and `/healthz` (nginx) answer.
+- **What we'd do differently:** Next time around, we would wait on the health endpoint of every hop the test goes
+  through, not just the one we wrote.
