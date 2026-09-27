@@ -17,7 +17,7 @@ x-backend-env: &backend-env
   REDIS_URL: redis://redis:6379/0
   TRIAGE_PROVIDER: ${TRIAGE_PROVIDER:-llm}
   GROQ_API_KEY: ${GROQ_API_KEY:-}
-  GROQ_MODEL: ${GROQ_MODEL:-llama-3.1-8b-instant}
+  GROQ_MODEL: ${GROQ_MODEL:-openai/gpt-oss-20b}
   RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-10}
   LOG_LEVEL: INFO
 

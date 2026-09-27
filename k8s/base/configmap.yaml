@@ -11,6 +11,6 @@ data:
   POSTGRES_USER: civicpulse
   REDIS_URL: redis://redis:6379/0
   TRIAGE_PROVIDER: llm
-  GROQ_MODEL: llama-3.1-8b-instant
+  GROQ_MODEL: openai/gpt-oss-20b
   RATE_LIMIT_PER_MINUTE: "10"
   LOG_LEVEL: INFO
