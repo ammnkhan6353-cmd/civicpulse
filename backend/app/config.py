@@ -35,7 +35,7 @@ class Settings(BaseSettings):
     triage_cache_ttl_seconds: int = 24 * 60 * 60
     groq_api_key: SecretStr = SecretStr("")
     groq_base_url: str = "https://api.groq.com/openai/v1"
-    groq_model: str = "llama-3.1-8b-instant"
+    groq_model: str = "openai/gpt-oss-20b"
     ollama_url: str = "http://ollama:11434"
     ollama_model: str = "llama3.2:1b"
     simulated_failure_mode: str = "none"  # none | raise | malformed
