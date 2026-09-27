@@ -65,12 +65,15 @@ Trade-off: the backend is now the single component with both internet egress and
 
 ### 8. The failure — something that cost us more than an hour
 
-**[FILL IN honestly — this must be your own story. Template:]**
-
-- **Symptom:** what we saw (exact error text / behaviour).
-- **What we wrongly believed first:** and what we tried because of it.
-- **The command or log line that told the truth:** paste it exactly.
-- **Fix:** commit `<sha>`, file:line.
-- **What we'd do differently:** one sentence.
-
-(Common candidates, only if they actually happened to you: CI failing on a missing `package-lock.json`; `docker compose up` failing because `.env` was missing; the HPA showing `<unknown>/60%` until metrics-server had data; `ImagePullBackOff` in k3d because the image wasn't imported; Windows CRLF line endings.)
+- **Symptom:** On our first CI run, the `integration` job failed at the POST step with
+  `curl: (56) Connection reset by peer`, although `docker compose up` had succeeded.
+- **What we wrongly believed first:** Me and Meerab believed that the backend was crashing on startup, so we
+  looked at backend logs and the Groq key for a while - but CI uses `TRIAGE_PROVIDER=simulated`, so
+  the key was irrelevant and the backend logs were clean.
+- **The command or log line that told the truth:** `curl -fsS http://127.0.0.1:8000/ready`
+  returned 200 while the request to nginx on :8080 was reset - the wait loop only waited
+  for the backend, not for nginx.
+- **Fix:** commit `6ce9cf5`, `.github/workflows/ci.yml:175-184` - the wait step now loops
+  until both `/ready` (backend) and `/healthz` (nginx) answer.
+- **What we'd do differently:** Next time around, we would wait on the health endpoint of every hop the test goes
+  through, not just the one we wrote.
