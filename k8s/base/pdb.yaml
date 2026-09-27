@@ -1,0 +1,11 @@
+# During voluntary disruptions (node drain, cluster upgrade) keep at least one
+# backend pod serving.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: backend
+  namespace: civicpulse
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: { app: backend }

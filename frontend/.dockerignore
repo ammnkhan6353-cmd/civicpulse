@@ -1,0 +1,13 @@
+# Keep the build context small: node_modules alone is ~200 MB.
+node_modules
+dist
+coverage
+.git
+.gitignore
+.env
+.env.*
+tests
+Dockerfile
+.dockerignore
+*.log
+.vscode

@@ -1,0 +1,16 @@
+# Non-secret configuration only. Secrets live in the civicpulse-secrets Secret.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: civicpulse-config
+  namespace: civicpulse
+data:
+  POSTGRES_HOST: postgres
+  POSTGRES_PORT: "5432"
+  POSTGRES_DB: civicpulse
+  POSTGRES_USER: civicpulse
+  REDIS_URL: redis://redis:6379/0
+  TRIAGE_PROVIDER: llm
+  GROQ_MODEL: openai/gpt-oss-20b
+  RATE_LIMIT_PER_MINUTE: "10"
+  LOG_LEVEL: INFO
