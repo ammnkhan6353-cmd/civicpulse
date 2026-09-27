@@ -31,7 +31,7 @@ System prompt (`providers/triage/prompt.py`):
 
 User message: `Location: …` followed by the complaint wrapped in `<complaint>` tags. Before that, `sanitise()` neutralises any `<complaint>`/`</complaint>` the citizen typed (so they cannot close our delimiter) and redacts phone numbers (ADR 0004).
 
-Request settings: Groq OpenAI-compatible endpoint, model `llama-3.1-8b-instant` (configurable via `GROQ_MODEL`), `response_format={"type": "json_object"}`, `temperature=0`, `max_tokens=200`, SDK retries disabled (we own the retry policy).
+Request settings: Groq OpenAI-compatible endpoint, model `openai/gpt-oss-20b` (configurable via `GROQ_MODEL`), `response_format={"type": "json_object"}`, `temperature=0`, `max_tokens=200`, SDK retries disabled (we own the retry policy).
 
 ## Schema — the model is never trusted
 
