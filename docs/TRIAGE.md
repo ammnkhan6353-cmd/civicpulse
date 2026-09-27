@@ -64,7 +64,7 @@ Key: `triage:` + SHA-256 of `lower(text|location)` with whitespace collapsed, so
 
 Hits and misses are counted in Redis (`triage:meta:hits` / `triage:meta:misses`) and reported by `GET /api/meta/providers`.
 
-**Measured hit rate:** [FILL IN after the demo — e.g. "submitted the 10 complaints in `docs/evidence/triage-sample.md` plus 4 re-submissions of the burst-main complaint: hits = 4, misses = 10, hit rate = 28.6 %". Paste the `/api/meta/providers` JSON into `docs/evidence/meta-providers.json`.]
+**Measured hit rate:** `docs/evidence/meta-providers.json` (local Compose run, 27 Sep 2026): hits = 3, misses = 2, **hit rate = 60 %**. The burst-main complaint was triaged once by `llm:groq` (1045 ms, cache miss); three identical re-submissions were served from the Redis cache in 0-1 ms without calling Groq. The second miss is an earlier submission that fell back to `rules:fallback` because the configured model had been retired by Groq (404 `model_not_found`) - fallback answers are deliberately not cached, so it did not poison the cache once the model was fixed.
 
 ## Prompt-injection test
 
