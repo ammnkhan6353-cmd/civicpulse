@@ -77,3 +77,35 @@ Trade-off: the backend is now the single component with both internet egress and
   until both `/ready` (backend) and `/healthz` (nginx) answer.
 - **What we'd do differently:** Next time around, we would wait on the health endpoint of every hop the test goes
   through, not just the one we wrote.
+---
+
+## Appendix - data-layer and cache decisions
+
+### A1. The two indexes, each justified by a named query
+
+Both are created in the migration, `backend/alembic/versions/0001_create_complaints.py:58-61`, never at application start-up.
+
+| Index | The query it serves | Why it matters |
+|---|---|---|
+| `ix_complaints_status_priority (status, priority)` | The dashboard filter in `ComplaintRepository.list_page` (`backend/app/repositories/complaints.py:36-60`): `SELECT ... FROM complaints WHERE status = :s AND priority = :p ORDER BY created_at DESC LIMIT 20 OFFSET :m`, plus the matching `SELECT count(*) ... WHERE status = :s AND priority = :p` for pagination | Operators live on "open + high". Without the index every filter click is a sequential scan of the whole table, twice (rows + count). Status comes first because it is the filter used on almost every view |
+| `ix_complaints_created_at (created_at)` | The default, unfiltered dashboard page in the same method: `SELECT ... FROM complaints ORDER BY created_at DESC LIMIT 20 OFFSET :m` | Postgres can walk the index backwards and stop after 20 rows instead of sorting every complaint on every page load; this is the query that runs most often |
+
+### A2. Redis AOF - why does a cache need a volume?
+
+Redis is started with `--appendonly yes --appendfsync everysec` on the named volume `redisdata` (`compose.yaml:127-129`, declared at `compose.yaml:168`).
+
+Our answer: in CivicPulse Redis is **not only** a rebuildable cache. The `/api/stats` entry (30 s TTL) is genuinely disposable - losing it costs one query. But Redis also holds:
+- the **rate-limit windows** - if a restart wipes them, every client gets a fresh allowance at once, which is exactly the burst against our Groq quota that the limiter exists to prevent;
+- the **triage cache** (24 h TTL, `backend/app/config.py:35`) - a cold restart means paying inference again for every duplicate complaint;
+- the **hit/miss counters** behind our reported hit rate.
+
+`everysec` bounds the loss to about one second of writes at almost no cost. The opposite view is defensible too - nothing in the system is *incorrect* without Redis, because every Redis failure degrades to "no cache" (`backend/app/services/triage_service.py:97-118`) - so persistence here is about cost and quota protection, not correctness.
+
+### A3. Three named volumes, and the dev-only bind mount
+
+Declared at `compose.yaml:166-169`:
+- `pgdata` - the Postgres data directory, the only durable state; `docker compose down` then `up` keeps every row (`docs/evidence/persistence-compose.png`).
+- `redisdata` - the AOF file, for the reasons in A2.
+- `ollama_models` - about 1.3 GB of model weights for the local provider, so they are not downloaded again on every `up`.
+
+The bind mount `./backend/app:/app/app:ro` (`compose.yaml:55-59`) exists in the dev file only, for uvicorn's hot reload. `compose.prod.yaml` has no bind mount and no `build:` - it runs `image: ${IMAGE_TAG}`, exactly the image that CI built and Trivy scanned.
